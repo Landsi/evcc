@@ -100,6 +100,11 @@ type Diagnosis interface {
 	Diagnose()
 }
 
+// ChargerInfoGetter is a helper interface that allows to get charger type information data
+type ChargerInfoGetter interface {
+	GetInfo() (string, error)
+}
+
 // ChargeTimer provides current charge cycle duration
 type ChargeTimer interface {
 	ChargeDuration() (time.Duration, error)

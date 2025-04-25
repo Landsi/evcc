@@ -38,8 +38,9 @@ import (
 // Keba is an api.Charger implementation
 type Keba struct {
 	*embed
-	log  *util.Logger
-	conn *modbus.Connection
+	log           *util.Logger
+	conn          *modbus.Connection
+	productFamily uint32
 }
 
 const (
@@ -60,6 +61,12 @@ const (
 	kebaRegMaxCurrent      = 5004 // mA
 	kebaRegEnable          = 5014
 	kebaRegTriggerPhase    = 5052
+)
+
+const (
+	kebaProductFamilyP20 = 2
+	kebaProductFamilyP30 = 3
+	kebaProductFamilyP40 = 4 // 6 regs, mA
 )
 
 func init() {
@@ -110,6 +117,10 @@ func NewKebaFromConfig(ctx context.Context, other map[string]interface{}) (api.C
 	if features := binary.BigEndian.Uint32(b); features%10 > 0 {
 		identify = wb.identify
 		reason = wb.statusReason
+	}
+
+	if features := binary.BigEndian.Uint32(b); features/1000000%10 > 0 {
+		wb.productFamily = features / 1000000 % 10
 	}
 
 	// phases
@@ -246,11 +257,29 @@ func (wb *Keba) Enabled() (bool, error) {
 
 // Enable implements the api.Charger interface
 func (wb *Keba) Enable(enable bool) error {
-	var u uint16
+	var err error
 	if enable {
-		u = 1
+		// enable charging station for all Kebas to be sure it's enabled
+		// TODO: check that this does not interfere with P40's resuming of charge
+		_, err = wb.conn.WriteSingleRegister(kebaRegEnable, 1)
+
+		// if P40, resume charging session by setting new current limit
+		// TODO: set to actual max current provided by meter if available, otherwise first x seconds will be min charge of wb only (may be fine?)
+		if wb.productFamily == kebaProductFamilyP40 {
+			err = wb.MaxCurrent(6)
+		}
+
+		return err
 	}
-	_, err := wb.conn.WriteSingleRegister(kebaRegEnable, u)
+
+	// disabling Keba P40 charging session by setting current in register 5004 to 0
+	// no setting of register 5014 to disable whole charger
+	if wb.productFamily == kebaProductFamilyP40 {
+		return wb.MaxCurrent(0)
+	}
+
+	// disabling non-P40 Keba chargers by register 5014
+	_, err = wb.conn.WriteSingleRegister(kebaRegEnable, 0)
 	return err
 }
 
